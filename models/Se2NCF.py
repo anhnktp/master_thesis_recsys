@@ -3,10 +3,11 @@ import torch.nn as nn
 from activations import Mish
 
 
-class ConvNCF(nn.Module):
 
-    def __init__(self, num_user, num_item, num_factor, dropout, GMF_model):
-        super(ConvNCF, self).__init__()
+class Se2NCF(nn.Module):
+
+    def __init__(self, num_user, num_item, num_factor, dropout, num_fm, GMF_model=None):
+        super(Se2NCF, self).__init__()
         """
         num_user: number of users;
         num_item: number of items;
@@ -20,22 +21,23 @@ class ConvNCF(nn.Module):
         self.dropout = dropout
         self.embed_user = nn.Embedding(num_embeddings=num_user, embedding_dim=num_factor)
         self.embed_item = nn.Embedding(num_embeddings=num_item, embedding_dim=num_factor)
-        num_fm = int(num_factor // 2)
-        self.ConvNCF_modules = nn.Sequential()
-        self.ConvNCF_modules.add_module('conv1', nn.Conv2d(1, num_fm, (2,2), stride=2))
-        self.ConvNCF_modules.add_module('batchnorm1', nn.BatchNorm2d(num_fm))
-        self.ConvNCF_modules.add_module('relu1', nn.ReLU(inplace=True))
 
-        num_conv_layers = 1
-        size = num_fm
-        while size != 1:
-            num_conv_layers += 1
-            self.ConvNCF_modules.add_module('conv%d' % num_conv_layers, nn.Conv2d(num_fm, num_fm, (2,2), stride=2))
-            self.ConvNCF_modules.add_module('batchnorm%d' % num_conv_layers, nn.BatchNorm2d(num_fm))
-            self.ConvNCF_modules.add_module('relu%d' % num_conv_layers, nn.ReLU())
-            size = int(size // 2)
+        self.SeNCF_modules = nn.Sequential()
+        self.SeNCF_modules.add_module('conv1', nn.Conv2d(1, num_fm, (2,2), stride=1, padding=1))
+        self.SeNCF_modules.add_module('batchnorm1', nn.BatchNorm2d(num_factor))
+        self.SeNCF_modules.add_module('relu1', nn.ReLU(inplace=True))
 
-        self.predict_layer = nn.Linear(in_features=num_fm, out_features=1)
+        self.SeNCF_modules.add_module('conv2', nn.Conv2d(num_fm, num_fm, (2, 2), stride=1, padding=0))
+        self.SeNCF_modules.add_module('batchnorm2', nn.BatchNorm2d(num_factor))
+        self.SeNCF_modules.add_module('relu2', nn.ReLU(inplace=True))
+
+        self.SeNCF_modules.add_module('conv3', nn.Conv2d(num_fm, 1, (1, 1), stride=1, padding=0))
+        self.SeNCF_modules.add_module('batchnorm3', nn.BatchNorm2d(num_factor))
+        self.SeNCF_modules.add_module('relu3', nn.ReLU(inplace=True))
+
+        self.SeNCF_modules.add_module('flatten', nn.Flatten())
+
+        self.predict_layer = nn.Linear(in_features=num_factor // 2, out_features=1)
         self.logit = nn.Sigmoid()
 
         # initialize weight
@@ -46,16 +48,15 @@ class ConvNCF(nn.Module):
             Initialize weights by normal distribution N(mean=0.0, std=0.01) or load from pretrained model
         """
         if not GMF_model:
-            for m in self.modules():
-                if isinstance(m, nn.Embedding):
-                    nn.init.normal_(m.weight, std=0.01)
+            nn.init.normal_(self.embed_user.weight, std=0.01)
+            nn.init.normal_(self.embed_item.weight, std=0.01)
         else:
             # embedding layers
             self.embed_user.weight.data.copy_(GMF_model.embed_user_GMF.weight)
             self.embed_item.weight.data.copy_(GMF_model.embed_item_GMF.weight)
 
         nn.init.kaiming_uniform_(self.predict_layer.weight, a=1, nonlinearity='sigmoid')
-        for m in self.ConvNCF_modules.modules():
+        for m in self.SeNCF_modules.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.normal_(m.weight, std=0.01)
 
@@ -65,11 +66,14 @@ class ConvNCF(nn.Module):
 
 
     def forward(self, user, item):
+
         embed_user = self.embed_user(user)
         embed_item = self.embed_item(item)
-        outer_product = torch.einsum('mi,mj->mij', [embed_user, embed_item])
-        outer_product = torch.unsqueeze(outer_product, dim=1)
-        output_ConvNCF = self.ConvNCF_modules(outer_product)
-        output_ConvNCF = output_ConvNCF.view(output_ConvNCF.size()[0], -1)
-        prediction = self.predict_layer(output_ConvNCF).view(-1)
+        stack = torch.stack([embed_user, embed_item], dim=-2)
+        stack = torch.unsqueeze(stack, dim=1)
+        output_SeNCF = self.SeNCF_modules(stack)
+        output_SeNCF = output_SeNCF.view(output_SeNCF.size()[0], -1)
+        prediction = self.predict_layer(output_SeNCF).view(-1)
+
         return self.logit(prediction)
+

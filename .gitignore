@@ -12,8 +12,8 @@ gen
 __pycache__/
 *.py[cod]
 *$py.class
-
-./data
+visualization.py
+data/*
 
 # C extensions
 *.so

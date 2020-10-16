@@ -4,7 +4,7 @@ import torch.nn as nn
 class DNCF(nn.Module):
 
     def __init__(self, num_user, num_item, num_factor, num_layer_mlp,
-                 dropout, model_type, GMF_model=None, MLP_model=None):
+                 dropout, GMF_model=None, MLP_model=None):
         super(DNCF, self).__init__()
         """
         num_user: number of users;
@@ -17,7 +17,6 @@ class DNCF(nn.Module):
         MLP_model: pre-trained MLP weights.
         """
         self.dropout = dropout
-        self.model = model_type
         self.GMF_model = GMF_model
         self.MLP_model = MLP_model
         self.embed_user_GMF = nn.Embedding(num_embeddings=num_user, embedding_dim=num_factor)

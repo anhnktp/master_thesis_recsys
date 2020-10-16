@@ -7,7 +7,6 @@ import torch.utils.data as data
 import torch.backends.cudnn as cudnn
 from tensorboardX import SummaryWriter
 from dataset import RecSys_Dataset
-import hiddenlayer as hl
 import config
 from models import *
 from utils import *
@@ -23,7 +22,7 @@ def parse_args():
                         help='root path of datasets folder')
     parser.add_argument('--lr', type=float, default=0.001, help='learning rate')
     parser.add_argument('--model_type', type=str, default='GMF',
-                        choices=['GMF', 'MLP', 'NeuMF', 'DNCF', 'ConvNCF', 'SE-GMF', 'SE2-ConvNCF', 'SE3-ConvNCF'],
+                        choices=['GMF', 'MLP', 'NeuMF', 'Se2NCF', 'Se3NCF', 'SeConvNCF', 'DNCF', 'ConvNCF'],
                         help='model type')
     parser.add_argument('--mf_pretrain', type=str, default='',
                         help='Specify the pretrain model filename for GMF part. If empty, no pretrain will be used')
@@ -39,10 +38,11 @@ def parse_args():
     parser.add_argument('--l2reg', type=float, default=0.,
                         help='l2 regularization')
     parser.add_argument('--dropout', type=float, default=0.1, help='dropout rate')
-    parser.add_argument('--batch_size', type=int, default=256, help='batch size in training')
-    parser.add_argument('--epochs', type=int, default=30, help='number of training epoches')
+    parser.add_argument('--batch_size', type=int, default=1024, help='batch size in training')
+    parser.add_argument('--epochs', type=int, default=20, help='number of training epoches')
     parser.add_argument('--top_k', type=int, default=10, help='compute metric@top_k')
     parser.add_argument('--num_factor', type=int, default=64, help='predictive factors numbers in the model')
+    parser.add_argument('--num_fm', type=int, default=64, help='number of feature map used in CNN layers in the model')
     parser.add_argument('--num_layer_mlp', type=int, default=3, help='number of layers in MLP model')
     parser.add_argument('--num_ng', type=int, default=4, help='sample negative items for training')
     parser.add_argument('--test_num_ng', type=int, default=99, help='sample part of negative items for testing')
@@ -63,8 +63,8 @@ if __name__ == '__main__':
     if use_lrs: tag_lrs = 'wlrs'
     else: tag_lrs = 'wolrs'
 
-    GMF_model_path = osp.join(args.model_root, args.mf_pretrain)
-    MLP_model_path = osp.join(args.model_root, args.mlp_pretrain)
+    GMF_model_path = args.mf_pretrain
+    MLP_model_path = args.mlp_pretrain
 
     if osp.isfile(GMF_model_path):
         GMF_model = torch.load(GMF_model_path)
@@ -91,29 +91,27 @@ if __name__ == '__main__':
     elif args.model_type == 'MLP':
         model = MLP(num_user, num_item, args.num_factor, args.num_layer_mlp, args.dropout, MLP_model)
     elif args.model_type == 'NeuMF':
-        model = NeuMF(num_user, num_item, args.num_factor,
-                              args.dropout, args.model_type, GMF_model)
-    elif args.model_type == 'SE2-ConvNCF':
-        model = SEC2NCF(num_user, num_item, args.num_factor,
+        model = NeuMF(num_user, num_item, args.num_factor, args.num_layer_mlp,
                               args.dropout, GMF_model, MLP_model)
-    elif args.model_type == 'SE3-ConvNCF':
-        model = SEC3NCF(num_user, num_item, args.num_factor,
-                              args.dropout, GMF_model, MLP_model)
+    elif args.model_type == 'Se2NCF':
+        model = Se2NCF(num_user, num_item, args.num_factor, args.dropout, args.num_fm, GMF_model)
+    elif args.model_type == 'Se3NCF':
+        model = Se3NCF(num_user, num_item, args.num_factor, args.dropout, args.num_fm, GMF_model, MLP_model)
+    elif args.model_type == 'SeConvNCF':
+        model = SeConvNCF(num_user, num_item, args.num_factor, args.dropout, args.num_fm, GMF_model, MLP_model)
+    elif args.model_type == 'DNCF':
+        model = DNCF(num_user, num_item, args.num_factor, args.num_layer_mlp, args.dropout, GMF_model, MLP_model)
     elif args.model_type == 'ConvNCF':
         model = ConvNCF(num_user, num_item, args.num_factor, args.dropout, GMF_model)
-    elif args.model_type == 'SE-GMF':
-        model = SECGMF(num_user, num_item, args.num_factor,
-                              args.dropout, args.model_type, GMF_model, MLP_model)
 
     cudnn.benchmark = True
     os.environ["CUDA_VISIBLE_DEVICES"] = args.device
     print('######### Model architecture #########')
     print(model)
-    hl.build_graph(model, (torch.zeros([args.batch_size]).long(), torch.zeros([args.batch_size]).long()))
     model = model.cuda()
     if freeze:
         for name, layer in model.named_parameters():
-            if not ("predict_layer" in name):
+            if ("embed" in name):
                 layer.requires_grad = False
 
     loss_function = nn.BCEWithLogitsLoss()
@@ -154,15 +152,16 @@ if __name__ == '__main__':
     ########################### TRAINING #####################################
     best_hr = 0
     config.engine_logger.critical('Starting training ...')
+    step_id = 0
     for epoch in range(args.epochs):
         model.train()  # Enable dropout (if have).
         start_time = time.time()
         train_loader.dataset.negative_sample()
         total_loss = 0
-        batch_id = 0
         with trange(training_steps) as t:
             for user, item, label in train_loader:
                 t.set_description('Epoch %i' % epoch)
+                # model.train()
                 user = user.cuda()
                 item = item.cuda()
                 label = label.float().cuda()
@@ -177,20 +176,17 @@ if __name__ == '__main__':
                     lr = scheduler.get_lr()[0]
                 else: lr = args.lr
                 total_loss += loss.item()
-                t.set_postfix(loss=np.sqrt(total_loss / (batch_id + 1)), lr=lr)
-                batch_id += 1
-                t.update(1)
-        avg_loss = total_loss / training_steps
-        writer.add_scalar('data/loss', avg_loss, epoch)
-        model.eval()
-        HR, NDCG = evaluate.metrics(model, test_loader, args.top_k)
+                t.set_postfix(loss=np.sqrt(total_loss / (step_id + 1)), lr=lr)
 
-        elapsed_time = time.time() - start_time
-        config.engine_logger.info(" The time elapse of epoch {:03d}".format(epoch) + " is: " +
-              time.strftime("%H: %M: %S", time.gmtime(elapsed_time)))
-        config.engine_logger.critical("Metric| HR: {:.3f}\tNDCG: {:.3f}\tAvgLoss: {:.3f}".format(np.mean(HR), np.mean(NDCG), avg_loss))
-        writer.add_scalar('performance/HR@{}'.format(args.top_k), HR, epoch)
-        writer.add_scalar('performance/NDCG@{}'.format(args.top_k), NDCG, epoch)
+                # model.eval()
+                avg_loss = total_loss / training_steps
+                HR, NDCG = evaluate.metrics(model, test_loader, args.top_k)
+                writer.add_scalar('data/loss', np.sqrt(total_loss / (step_id + 1)), step_id)
+                writer.add_scalar('performance/HR@{}'.format(args.top_k), HR, step_id)
+                writer.add_scalar('performance/NDCG@{}'.format(args.top_k), NDCG, step_id)
+                step_id += 1
+                t.update(1)
+
         if HR > best_hr:
             best_hr, best_ndcg, best_epoch, best_loss = HR, NDCG, epoch, avg_loss
             if args.out:
@@ -198,7 +194,11 @@ if __name__ == '__main__':
                     os.mkdir(model_dir)
                 if not os.path.exists(exp_name):
                     os.makedirs(osp.join(model_dir, exp_name), exist_ok=True)
-                torch.save(model, osp.join(model_dir, exp_name, 'epoch_{}_HR_{}_NDCG_{}.pth'.format(epoch, HR, NDCG)))
+                torch.save(model,
+                           osp.join(model_dir, exp_name, 'step_{}_HR_{}_NDCG_{}.pth'.format(step_id, HR, NDCG)))
+
+        config.engine_logger.critical(
+            "Metric| HR: {:.3f}\tNDCG: {:.3f}\tAvgLoss: {:.3f}".format(np.mean(HR), np.mean(NDCG), avg_loss))
 
     config.engine_logger.critical("----- End| Best epoch {:03d}: HR = {:.3f}, NDCG = {:.3f} -----".format( best_epoch, best_hr, best_ndcg))
 

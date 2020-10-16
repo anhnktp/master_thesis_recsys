@@ -1,5 +1,7 @@
 import torch
 import torch.nn as nn
+from activations import Mish
+
 
 class MLP(nn.Module):
 
@@ -14,29 +16,37 @@ class MLP(nn.Module):
         MLP_model: pre-trained MLP weights.
         """
         self.dropout = dropout
-        self.MLP_model = MLP_model
+        # self.embed_user_MLP = nn.Embedding(
+        #     num_embeddings=num_user, embedding_dim=num_factor * (2 ** (num_layer_mlp - 1)))
+        # self.embed_item_MLP = nn.Embedding(
+        #     num_embeddings=num_item, embedding_dim=num_factor * (2 ** (num_layer_mlp - 1)))
         self.embed_user_MLP = nn.Embedding(
-            num_embeddings=num_user, embedding_dim=num_factor * (2 ** (num_layer_mlp - 1)))
+            num_embeddings=num_user, embedding_dim=num_factor)
         self.embed_item_MLP = nn.Embedding(
-            num_embeddings=num_item, embedding_dim=num_factor * (2 ** (num_layer_mlp - 1)))
+            num_embeddings=num_item, embedding_dim=num_factor)
 
         self.MLP_layers = nn.Sequential()
         for i in range(num_layer_mlp):
             input_size = num_factor * (2 ** (num_layer_mlp - i))
-            self.MLP_layers.add_module('linear%d' %i, nn.Linear(in_features=input_size, out_features=input_size // 2))
-            self.MLP_layers.add_module('relu%d' %i, nn.ReLU())
+            if i == 0:
+                self.MLP_layers.add_module('linear%d' %i, nn.Linear(in_features=num_factor*2, out_features=input_size // 2))
+            else:
+                self.MLP_layers.add_module('linear%d' %i, nn.Linear(in_features=input_size, out_features=input_size // 2))
+            # self.MLP_layers.add_module('relu%d' %i, nn.ReLU())
+            self.MLP_layers.add_module('mish%d' %i, Mish())
             self.MLP_layers.add_module('dropout%d' %i, nn.Dropout(p=self.dropout))
 
         self.predict_layer = nn.Linear(in_features=num_factor, out_features=1)
+        self.predict_mish = Mish()
 
         # initialize weight
-        self._init_weight_()
+        self._init_weight_(MLP_model)
 
-    def _init_weight_(self):
+    def _init_weight_(self, MLP_model=None):
         """
             Initialize weights by normal distribution N(mean=0.0, std=0.01) or load from pretrained model
         """
-        if not self.MLP_model:
+        if MLP_model:
             for m in self.modules():
                 if isinstance(m, nn.Embedding):
                     nn.init.normal_(m.weight, std=0.01)
@@ -49,16 +59,16 @@ class MLP(nn.Module):
                     m.bias.data.zero_()
         else:
             # embedding layers
-            self.embed_user_MLP.weight = self.MLP_model.embed_user_MLP.weight
-            self.embed_item_MLP.weight = self.MLP_model.embed_item_MLP.weight
+            self.embed_user_MLP.weight = MLP_model.embed_user_MLP.weight
+            self.embed_item_MLP.weight = MLP_model.embed_item_MLP.weight
             # mlp layers
             for (m1, m2) in zip(
-                    self.MLP_layers, self.MLP_model.MLP_layers):
+                    self.MLP_layers, MLP_model.MLP_layers):
                 if isinstance(m1, nn.Linear) and isinstance(m2, nn.Linear):
                     m1.weight.data.copy_(m2.weight)
                     m1.bias.data.copy_(m2.bias)
             # predict layers
-            self.predict_layer.weight, self.predict_layer.bias = self.MLP_model.predict_layer.weight, self.MLP_model.predict_layer.bias
+            self.predict_layer.weight, self.predict_layer.bias = MLP_model.predict_layer.weight, MLP_model.predict_layer.bias
 
     def forward(self, user, item):
         embed_user_MLP = self.embed_user_MLP(user)
@@ -66,4 +76,4 @@ class MLP(nn.Module):
         interaction = torch.cat((embed_user_MLP, embed_item_MLP), -1)
         output_MLP = self.MLP_layers(interaction)
         prediction = self.predict_layer(output_MLP).view(-1)
-        return prediction
+        return self.predict_mish(prediction)
