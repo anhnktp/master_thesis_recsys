@@ -25,19 +25,18 @@ class SeConvNCF(nn.Module):
         self.embed_item_02 = nn.Embedding(num_embeddings=num_item, embedding_dim=num_factor)
 
         self.SeNCF_modules = nn.Sequential()
-        self.SeNCF_modules.add_module('conv1', nn.Conv2d(1, num_fm, (2,2), stride=1, padding=1))
-        self.SeNCF_modules.add_module('batchnorm1', nn.BatchNorm2d(num_factor))
+        self.SeNCF_modules.add_module('conv1', nn.Conv2d(1, num_fm, (2, 2), stride=2, padding=1))
+        self.SeNCF_modules.add_module('batchnorm1', nn.BatchNorm2d(num_fm))
         self.SeNCF_modules.add_module('relu1', nn.ReLU(inplace=True))
 
         self.SeNCF_modules.add_module('conv2', nn.Conv2d(num_fm, num_fm, (2, 2), stride=1, padding=0))
-        self.SeNCF_modules.add_module('batchnorm2', nn.BatchNorm2d(num_factor))
+        self.SeNCF_modules.add_module('batchnorm2', nn.BatchNorm2d(num_fm))
         self.SeNCF_modules.add_module('relu2', nn.ReLU(inplace=True))
 
         self.SeNCF_modules.add_module('conv3', nn.Conv2d(num_fm, 1, (1, 1), stride=1, padding=0))
-        self.SeNCF_modules.add_module('batchnorm3', nn.BatchNorm2d(num_factor))
+        self.SeNCF_modules.add_module('batchnorm3', nn.BatchNorm2d(1))
         self.SeNCF_modules.add_module('relu3', nn.ReLU(inplace=True))
 
-        self.SeNCF_modules.add_module('flatten', nn.Flatten())
 
         self.ConvNCF_modules = nn.Sequential()
         self.ConvNCF_modules.add_module('conv1', nn.Conv2d(1, num_fm, (2, 2), stride=2))
@@ -45,7 +44,7 @@ class SeConvNCF(nn.Module):
         self.ConvNCF_modules.add_module('relu1', nn.ReLU(inplace=True))
 
         num_conv_layers = 1
-        size = num_fm
+        size = int(num_factor // 2)
         while size != 1:
             num_conv_layers += 1
             self.ConvNCF_modules.add_module('conv%d' % num_conv_layers, nn.Conv2d(num_fm, num_fm, (2, 2), stride=2))
@@ -53,8 +52,7 @@ class SeConvNCF(nn.Module):
             self.ConvNCF_modules.add_module('relu%d' % num_conv_layers, nn.ReLU())
             size = int(size // 2)
 
-        self.predict_layer = nn.Linear(in_features=num_factor, out_features=1)
-        self.logit = nn.Sigmoid()
+        self.predict_layer = nn.Linear(in_features=num_fm + int(num_factor // 2), out_features=1)
 
         # initialize weight
         self._init_weight_(GMF_model, MLP_model)
@@ -108,7 +106,8 @@ class SeConvNCF(nn.Module):
         output_ConvNCF = self.ConvNCF_modules(outer_product)
         output_ConvNCF = output_ConvNCF.view(output_ConvNCF.size()[0], -1)
         concat = torch.cat((output_SeNCF, output_ConvNCF), -1)
+
         prediction = self.predict_layer(concat).view(-1)
 
-        return self.logit(prediction)
+        return prediction
 

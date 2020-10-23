@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-from activations import Mish
 
 
 
@@ -23,21 +22,19 @@ class Se2NCF(nn.Module):
         self.embed_item = nn.Embedding(num_embeddings=num_item, embedding_dim=num_factor)
 
         self.SeNCF_modules = nn.Sequential()
-        self.SeNCF_modules.add_module('conv1', nn.Conv2d(1, num_fm, (2,2), stride=1, padding=1))
-        self.SeNCF_modules.add_module('batchnorm1', nn.BatchNorm2d(num_factor))
+        self.SeNCF_modules.add_module('conv1', nn.Conv2d(1, num_fm, (2,2), stride=2, padding=1))
+        self.SeNCF_modules.add_module('batchnorm1', nn.BatchNorm2d(num_fm))
         self.SeNCF_modules.add_module('relu1', nn.ReLU(inplace=True))
 
         self.SeNCF_modules.add_module('conv2', nn.Conv2d(num_fm, num_fm, (2, 2), stride=1, padding=0))
-        self.SeNCF_modules.add_module('batchnorm2', nn.BatchNorm2d(num_factor))
+        self.SeNCF_modules.add_module('batchnorm2', nn.BatchNorm2d(num_fm))
         self.SeNCF_modules.add_module('relu2', nn.ReLU(inplace=True))
 
         self.SeNCF_modules.add_module('conv3', nn.Conv2d(num_fm, 1, (1, 1), stride=1, padding=0))
-        self.SeNCF_modules.add_module('batchnorm3', nn.BatchNorm2d(num_factor))
+        self.SeNCF_modules.add_module('batchnorm3', nn.BatchNorm2d(1))
         self.SeNCF_modules.add_module('relu3', nn.ReLU(inplace=True))
 
-        self.SeNCF_modules.add_module('flatten', nn.Flatten())
-
-        self.predict_layer = nn.Linear(in_features=num_factor // 2, out_features=1)
+        self.predict_layer = nn.Linear(in_features=int(num_factor // 2), out_features=1)
         self.logit = nn.Sigmoid()
 
         # initialize weight
@@ -75,5 +72,5 @@ class Se2NCF(nn.Module):
         output_SeNCF = output_SeNCF.view(output_SeNCF.size()[0], -1)
         prediction = self.predict_layer(output_SeNCF).view(-1)
 
-        return self.logit(prediction)
+        return prediction
 

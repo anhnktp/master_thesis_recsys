@@ -22,24 +22,22 @@ class NeuMF(nn.Module):
         self.embed_user_GMF = nn.Embedding(num_embeddings=num_user, embedding_dim=num_factor)
         self.embed_item_GMF = nn.Embedding(num_embeddings=num_item, embedding_dim=num_factor)
 
-        self.embed_user_MLP = nn.Embedding(
-            num_embeddings=num_user, embedding_dim=num_factor)
-        self.embed_item_MLP = nn.Embedding(
-            num_embeddings=num_item, embedding_dim=num_factor)
+        self.embed_user_MLP = nn.Embedding(num_embeddings=num_user, embedding_dim=num_factor)
+        self.embed_item_MLP = nn.Embedding(num_embeddings=num_item, embedding_dim=num_factor)
 
         self.MLP_layers = nn.Sequential()
         for i in range(num_layer_mlp):
             input_size = num_factor * (2 ** (num_layer_mlp - i))
+            self.MLP_layers.add_module('dropout%d' % i, nn.Dropout(p=self.dropout))
             if i == 0:
-                self.MLP_layers.add_module('linear%d' %i, nn.Linear(in_features=num_factor*2, out_features=input_size // 2))
+                self.MLP_layers.add_module('linear%d' % i,
+                                           nn.Linear(in_features=num_factor * 2, out_features=input_size // 2))
             else:
-                self.MLP_layers.add_module('linear%d' %i, nn.Linear(in_features=input_size, out_features=input_size // 2))
-            # self.MLP_layers.add_module('relu%d' %i, nn.ReLU())
-            self.MLP_layers.add_module('mish%d' %i, Mish())
-            self.MLP_layers.add_module('dropout%d' %i, nn.Dropout(p=self.dropout))
+                self.MLP_layers.add_module('linear%d' % i,
+                                           nn.Linear(in_features=input_size, out_features=input_size // 2))
+            self.MLP_layers.add_module('relu%d' % i, nn.ReLU())
 
         self.predict_layer = nn.Linear(in_features=num_factor*2, out_features=1)
-        self.predict_mish = Mish()
 
         # initialize weight
         self._init_weight_(GMF_model, MLP_model)
@@ -95,4 +93,4 @@ class NeuMF(nn.Module):
         output_MLP = self.MLP_layers(interaction)
         concat = torch.cat((output_GMF, output_MLP), -1)
         prediction = self.predict_layer(concat).view(-1)
-        return self.predict_mish(prediction)
+        return prediction

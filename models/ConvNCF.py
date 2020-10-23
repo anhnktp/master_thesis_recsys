@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-from activations import Mish
 
 
 class ConvNCF(nn.Module):
@@ -72,4 +71,4 @@ class ConvNCF(nn.Module):
         output_ConvNCF = self.ConvNCF_modules(outer_product)
         output_ConvNCF = output_ConvNCF.view(output_ConvNCF.size()[0], -1)
         prediction = self.predict_layer(output_ConvNCF).view(-1)
-        return self.logit(prediction)
+        return prediction

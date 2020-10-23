@@ -18,7 +18,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_root', type=str, default='./data', help='root path of datasets folder')
     parser.add_argument('--model_root', type=str, default='./checkpoints', help='checkpoints directory')
-    parser.add_argument('--dataset_name', type=str, default='ml-1m', choices=['ml-1m', 'pinterest-20', 'amazon'],
+    parser.add_argument('--dataset_name', type=str, default='ml-1m', choices=['ml-1m', 'pinterest'],
                         help='root path of datasets folder')
     parser.add_argument('--lr', type=float, default=0.001, help='learning rate')
     parser.add_argument('--model_type', type=str, default='GMF',
@@ -44,8 +44,8 @@ def parse_args():
     parser.add_argument('--num_factor', type=int, default=64, help='predictive factors numbers in the model')
     parser.add_argument('--num_fm', type=int, default=64, help='number of feature map used in CNN layers in the model')
     parser.add_argument('--num_layer_mlp', type=int, default=3, help='number of layers in MLP model')
-    parser.add_argument('--num_ng', type=int, default=4, help='sample negative items for training')
-    parser.add_argument('--test_num_ng', type=int, default=99, help='sample part of negative items for testing')
+    parser.add_argument('--num_neg', type=int, default=4, help='sample negative items for training')
+    parser.add_argument('--test_num_neg', type=int, default=99, help='sample part of negative items for testing')
     parser.add_argument('--out', type=bool, default=True, help='whether to save model')
     parser.add_argument('--device', type=str, default='0', help='gpu card id or cpu')
     return parser.parse_args()
@@ -74,16 +74,19 @@ if __name__ == '__main__':
         tag_pretrain = 'no_pretrain'
     if osp.isfile(MLP_model_path):
         MLP_model = torch.load(MLP_model_path)
-    else: MLP_model = None
+        tag_pretrain = 'with_pretrain'
+    else:
+        MLP_model = None
+
 
     exp_name = '{}_{}_lr{}_{}_{}_{}factor'.format(args.model_type, tag_pretrain, args.lr, learner, tag_lrs, args.num_factor)
     train_data, test_data, num_user, num_item, train_mat = load_data(test_num=100, data_root=args.data_root, dataset_name=args.dataset_name)
-    train_dataset = RecSys_Dataset(train_data, num_item, train_mat, args.num_ng, True)
+    train_dataset = RecSys_Dataset(train_data, num_item, train_mat, args.num_neg, True)
     test_dataset = RecSys_Dataset(test_data, num_item, train_mat, 0, False)
     train_loader = data.DataLoader(train_dataset,
                                    batch_size=args.batch_size, shuffle=True, num_workers=4)
     test_loader = data.DataLoader(test_dataset,
-                                  batch_size=args.test_num_ng + 1, shuffle=False, num_workers=0)
+                                  batch_size=args.test_num_neg + 1, shuffle=False, num_workers=0)
 
 
     if args.model_type == 'GMF':
@@ -180,13 +183,12 @@ if __name__ == '__main__':
 
                 # model.eval()
                 avg_loss = total_loss / training_steps
-                HR, NDCG = evaluate.metrics(model, test_loader, args.top_k)
-                writer.add_scalar('data/loss', np.sqrt(total_loss / (step_id + 1)), step_id)
-                writer.add_scalar('performance/HR@{}'.format(args.top_k), HR, step_id)
-                writer.add_scalar('performance/NDCG@{}'.format(args.top_k), NDCG, step_id)
+                writer.add_scalar('data/loss', avg_loss, step_id)
                 step_id += 1
                 t.update(1)
-
+        HR, NDCG = evaluate.metrics(model, test_loader, args.top_k)
+        writer.add_scalar('performance/HR@{}'.format(args.top_k), HR, epoch)
+        writer.add_scalar('performance/NDCG@{}'.format(args.top_k), NDCG, epoch)
         if HR > best_hr:
             best_hr, best_ndcg, best_epoch, best_loss = HR, NDCG, epoch, avg_loss
             if args.out:
